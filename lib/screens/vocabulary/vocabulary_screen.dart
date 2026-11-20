@@ -4,6 +4,7 @@ import 'package:flutter/services.dart';
 import '../../l10n/app_strings.dart';
 import '../../models/vocab_word.dart';
 import '../../state/app_controller.dart';
+import '../../widgets/add_word_dialog.dart';
 import '../../widgets/pronunciation_practice_sheet.dart';
 import '../../widgets/user_avatar_button.dart';
 import '../profile/profile_screen.dart';
@@ -92,90 +93,7 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
   }
 
   Future<void> _showAddWordDialog() async {
-    final s = AppStrings.of(context);
-    final wordCtrl = TextEditingController();
-    final transCtrl = TextEditingController();
-    final ctxCtrl = TextEditingController();
-    final exampleCtrl = TextEditingController();
-
-    final created = await showDialog<VocabWord>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(s.tr('new_word_title')),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: wordCtrl,
-                autofocus: true,
-                decoration: InputDecoration(
-                  labelText: s.tr('word_or_phrase'),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: transCtrl,
-                decoration: InputDecoration(
-                  labelText: s.tr('translation_label'),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: ctxCtrl,
-                maxLines: 2,
-                decoration: InputDecoration(
-                  labelText: s.tr('context_optional'),
-                ),
-              ),
-              const SizedBox(height: 10),
-              TextField(
-                controller: exampleCtrl,
-                maxLines: 2,
-                decoration: InputDecoration(
-                  labelText: s.tr('example_optional'),
-                ),
-              ),
-            ],
-          ),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(),
-            child: Text(s.tr('cancel_btn')),
-          ),
-          FilledButton(
-            onPressed: () {
-              final w = wordCtrl.text.trim();
-              final t = transCtrl.text.trim();
-              if (w.isEmpty || t.isEmpty) return;
-              final now = DateTime.now();
-              Navigator.of(ctx).pop(
-                VocabWord(
-                  id: 'manual_word_${now.microsecondsSinceEpoch}',
-                  word: w,
-                  translation: t,
-                  contextSentence: ctxCtrl.text.trim(),
-                  exampleSentence: exampleCtrl.text.trim(),
-                  sourceTitle: '',
-                  createdAt: now,
-                  nextReviewAt: now,
-                ),
-              );
-            },
-            child: Text(s.tr('add_btn')),
-          ),
-        ],
-      ),
-    );
-
-    Future<void>.delayed(const Duration(milliseconds: 450), () {
-      wordCtrl.dispose();
-      transCtrl.dispose();
-      ctxCtrl.dispose();
-      exampleCtrl.dispose();
-    });
-
+    final created = await showAddWordSheet(context);
     if (created != null && mounted) {
       final controller = AppScope.of(context);
       await controller.addWord(created);
@@ -196,7 +114,9 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
       if (q.isEmpty) return true;
       return w.word.toLowerCase().contains(q) ||
           w.translation.toLowerCase().contains(q) ||
-          w.contextSentence.toLowerCase().contains(q);
+          w.contextSentence.toLowerCase().contains(q) ||
+          w.exampleSentence.toLowerCase().contains(q) ||
+          w.exampleTranslation.toLowerCase().contains(q);
     }).toList();
   }
 
@@ -337,6 +257,9 @@ class _VocabularyScreenState extends State<VocabularyScreen> {
                       return _VocabCard(
                         word: w,
                         onSpeak: () => controller.speakTarget(w.word),
+                        onSpeakExample: w.exampleSentence.trim().isNotEmpty
+                            ? () => controller.speakTarget(w.exampleSentence)
+                            : null,
                         onDelete: () => controller.deleteWord(w.id),
                       );
                     },
@@ -515,11 +438,13 @@ class _VocabCard extends StatelessWidget {
   const _VocabCard({
     required this.word,
     required this.onSpeak,
+    this.onSpeakExample,
     required this.onDelete,
   });
 
   final VocabWord word;
   final VoidCallback onSpeak;
+  final VoidCallback? onSpeakExample;
   final VoidCallback onDelete;
 
   @override
@@ -527,6 +452,9 @@ class _VocabCard extends StatelessWidget {
     final s = AppStrings.of(context);
     final scheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
+    final hasExample = word.exampleSentence.trim().isNotEmpty;
+    final hasContext = word.contextSentence.trim().isNotEmpty &&
+        word.contextSentence.trim() != word.exampleSentence.trim();
 
     return Card(
       child: Padding(
@@ -590,7 +518,7 @@ class _VocabCard extends StatelessWidget {
                 ),
               ],
             ),
-            if (word.contextSentence.isNotEmpty) ...[
+            if (hasExample) ...[
               const SizedBox(height: 10),
               Container(
                 width: double.infinity,
@@ -602,9 +530,74 @@ class _VocabCard extends StatelessWidget {
                   color: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
                   borderRadius: BorderRadius.circular(10),
                 ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            word.exampleSentence,
+                            style: textTheme.bodySmall?.copyWith(
+                              height: 1.4,
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          if (word.exampleTranslation.trim().isNotEmpty) ...[
+                            const SizedBox(height: 3),
+                            Text(
+                              word.exampleTranslation,
+                              style: textTheme.bodySmall?.copyWith(
+                                color: scheme.onSurfaceVariant,
+                                fontStyle: FontStyle.italic,
+                                height: 1.35,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
+                    if (onSpeakExample != null) ...[
+                      const SizedBox(width: 6),
+                      IconButton(
+                        visualDensity: VisualDensity.compact,
+                        constraints: const BoxConstraints(
+                          minWidth: 30,
+                          minHeight: 30,
+                        ),
+                        padding: EdgeInsets.zero,
+                        tooltip: s.tr('speak_example_tooltip'),
+                        icon: Icon(
+                          Icons.volume_up_outlined,
+                          size: 18,
+                          color: scheme.primary,
+                        ),
+                        onPressed: onSpeakExample,
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
+            if (hasContext) ...[
+              const SizedBox(height: 8),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 9,
+                ),
+                decoration: BoxDecoration(
+                  color: scheme.surfaceContainerHighest.withValues(alpha: 0.3),
+                  borderRadius: BorderRadius.circular(10),
+                ),
                 child: Text(
                   word.contextSentence,
-                  style: textTheme.bodySmall?.copyWith(height: 1.4),
+                  style: textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                    height: 1.4,
+                  ),
                 ),
               ),
             ],

@@ -14,6 +14,7 @@ import '../services/pronunciation_service.dart';
 import '../services/storage_service.dart';
 import '../services/tts_service.dart';
 import '../services/web_article_service.dart';
+import '../services/word_script_validator.dart';
 import '../services/youtube_subtitle_service.dart';
 
 class AppController extends ChangeNotifier {
@@ -571,6 +572,84 @@ class AppController extends ChangeNotifier {
     return _allVocabulary.any(
       (w) =>
           w.languageCode == lang && w.word.trim().toLowerCase() == key,
+    );
+  }
+
+  /// Auto-fills translation, natural topic-aware example, and example
+  /// translation for [word], checking local script compatibility and the
+  /// persistent local cache first unless [forceRefresh] is true.
+  Future<WordAutofillResult> autofillVocabWord(
+    String word, {
+    bool forceRefresh = false,
+  }) async {
+    final cleaned = word.trim();
+    if (cleaned.isEmpty) {
+      return const WordAutofillResult(
+        word: '',
+        translation: '',
+        example: '',
+        exampleTranslation: '',
+      );
+    }
+
+    final targetCode = _settings.targetLanguageCode;
+    final nativeCode = _settings.nativeLanguageCode;
+    final topicId = _settings.learningTopic.id;
+
+    // Zero-quota guard: never hit AI if the writing script does not match.
+    final scriptCheck = WordScriptValidator.validate(
+      text: cleaned,
+      targetLangCode: targetCode,
+    );
+    if (!scriptCheck.isCompatible) {
+      return WordAutofillResult(
+        word: cleaned,
+        translation: '',
+        example: '',
+        exampleTranslation: '',
+        isTargetLanguage: false,
+        errorDetail: 'script_mismatch',
+      );
+    }
+
+    if (!forceRefresh) {
+      final cached = await storage.loadVocabAutofillCache(
+        word: cleaned,
+        targetLangCode: targetCode,
+        nativeLangCode: nativeCode,
+        topicId: topicId,
+      );
+      if (cached != null &&
+          (cached.hasTranslation || !cached.isTargetLanguage)) {
+        return cached;
+      }
+    }
+
+    final result = await gemini.autofillVocabularyWord(
+      word: cleaned,
+      settings: _settings,
+    );
+
+    if (result.usedAi && (result.hasTranslation || !result.isTargetLanguage)) {
+      await storage.saveVocabAutofillCache(
+        result: result,
+        targetLangCode: targetCode,
+        nativeLangCode: nativeCode,
+        topicId: topicId,
+      );
+    }
+    return result;
+  }
+
+  /// Stores a verified autofill entry (e.g. after the user accepts a suggested
+  /// target-language replacement word) so future lookups resolve instantly.
+  Future<void> cacheVerifiedWordAutofill(WordAutofillResult result) async {
+    if (!result.hasTranslation || !result.isTargetLanguage) return;
+    await storage.saveVocabAutofillCache(
+      result: result,
+      targetLangCode: _settings.targetLanguageCode,
+      nativeLangCode: _settings.nativeLanguageCode,
+      topicId: _settings.learningTopic.id,
     );
   }
 

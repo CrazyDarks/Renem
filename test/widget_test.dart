@@ -14,13 +14,18 @@ import 'package:languagema/models/user_progress.dart';
 import 'package:languagema/models/vocab_word.dart';
 import 'package:languagema/services/ai/ai_curriculum_service.dart';
 import 'package:languagema/services/ai/ai_router_client.dart';
+import 'package:languagema/services/ai/ai_translation_service.dart';
 import 'package:languagema/services/cefr_exam_blueprints.dart';
 import 'package:languagema/services/cefr_question_bank.dart';
 import 'package:languagema/services/csv_service.dart';
 import 'package:languagema/services/gemini_service.dart';
 import 'package:languagema/services/pronunciation_service.dart';
+import 'package:languagema/services/storage_service.dart';
 import 'package:languagema/services/tts_service.dart';
 import 'package:languagema/services/web_article_service.dart';
+import 'package:languagema/services/word_script_validator.dart';
+import 'package:languagema/state/app_controller.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   test('CSV serialization and parsing round-trip (Anki compatible)', () {
@@ -973,5 +978,449 @@ void main() {
     final restoredQa = GrammarQaEntry.fromJson(qaRes.entry!.toJson());
     expect(restoredQa.question, 'Коли вживається Dativ після mit?');
     expect(restoredQa.exceptionsAndMistakes.length, 1);
+  });
+
+  test('AI vocabulary autofill parses structured JSON, respects topic & caches locally', () async {
+    SharedPreferences.setMockInitialValues({});
+
+    String? capturedPrompt;
+    var apiCalls = 0;
+    final mockClient = MockClient((request) async {
+      final url = request.url.toString();
+      if (request.method == 'GET' && url.contains('/v1beta/models?key=')) {
+        return http.Response(
+          jsonEncode({
+            'models': [
+              {
+                'name': 'models/gemini-3.5-flash-lite',
+                'supportedGenerationMethods': ['generateContent'],
+              },
+            ],
+          }),
+          200,
+        );
+      }
+      apiCalls++;
+      capturedPrompt = request.body;
+      return http.Response.bytes(
+        utf8.encode(
+          jsonEncode({
+            'candidates': [
+              {
+                'content': {
+                  'parts': [
+                    {
+                      'text': jsonEncode({
+                        'translation': 'квиток на поїзд',
+                        'example': 'Ich habe eine Fahrkarte nach Wien gekauft.',
+                        'exampleTranslation': 'Я купив квиток до Відня.',
+                        'partOfSpeech': 'іменник',
+                      }),
+                    },
+                  ],
+                },
+                'finishReason': 'STOP',
+              },
+            ],
+          }),
+        ),
+        200,
+        headers: {'content-type': 'application/json; charset=utf-8'},
+      );
+    });
+
+    final router = AiRouterClient(httpClient: mockClient);
+    final translationService = AiTranslationService(router);
+    const settings = AppSettings(
+      targetLanguageCode: 'de',
+      nativeLanguageCode: 'uk',
+      geminiApiKey: 'AIzaSyMockAutofillKey12345',
+      learningTopicId: 'travel',
+    );
+
+    final result = await translationService.autofillVocabularyWord(
+      word: 'die Fahrkarte',
+      settings: settings,
+    );
+    expect(apiCalls, 1);
+    expect(capturedPrompt, contains('Travel'));
+    expect(result.hasTranslation, isTrue);
+    expect(result.usedAi, isTrue);
+    expect(result.translation, 'квиток на поїзд');
+    expect(result.example, 'Ich habe eine Fahrkarte nach Wien gekauft.');
+    expect(result.exampleTranslation, 'Я купив квиток до Відня.');
+    expect(result.partOfSpeech, 'іменник');
+
+    // Local cache round-trip in StorageService
+    final storage = StorageService();
+    await storage.saveVocabAutofillCache(
+      result: result,
+      targetLangCode: 'de',
+      nativeLangCode: 'uk',
+      topicId: 'travel',
+    );
+    final cached = await storage.loadVocabAutofillCache(
+      word: '  DIE   fahrkarte ',
+      targetLangCode: 'de',
+      nativeLangCode: 'uk',
+      topicId: 'travel',
+    );
+    expect(cached, isNotNull);
+    expect(cached!.fromCache, isTrue);
+    expect(cached.translation, 'квиток на поїзд');
+    expect(cached.exampleTranslation, 'Я купив квиток до Відня.');
+
+    // VocabWord JSON round-trip preserves exampleTranslation
+    final now = DateTime.now();
+    final vocabWord = VocabWord(
+      id: 'w1',
+      word: 'die Fahrkarte',
+      translation: cached.translation,
+      exampleSentence: cached.example,
+      exampleTranslation: cached.exampleTranslation,
+      partOfSpeech: cached.partOfSpeech,
+      createdAt: now,
+      nextReviewAt: now,
+    );
+    final restoredWord = VocabWord.fromJson(vocabWord.toJson());
+    expect(restoredWord.exampleTranslation, 'Я купив квиток до Відня.');
+
+    // Verify new Add Word localization keys
+    for (final lang in ['uk', 'en', 'ur']) {
+      final s = AppStrings(lang);
+      for (final key in [
+        'word_in_target_lang_label',
+        'ai_autofill_btn',
+        'ai_autofill_loading',
+        'ai_autofill_offline_hint',
+        'example_usage_label',
+        'example_translation_label',
+        'speak_word_tooltip',
+        'speak_example_tooltip',
+        'vocab_script_mismatch_warning',
+        'vocab_lang_mismatch_warning',
+        'vocab_replace_word_btn',
+        'vocab_save_mismatch_title',
+        'vocab_save_anyway_btn',
+      ]) {
+        expect(s.tr(key), isNot(equals(key)));
+      }
+    }
+  });
+
+  test('WordScriptValidator catches script mismatches locally without API calls', () async {
+    // Cyrillic entered for Latin target (German / English / Czech)
+    final cyrillicInGerman = WordScriptValidator.validate(
+      text: 'яблуко',
+      targetLangCode: 'de',
+    );
+    expect(cyrillicInGerman.isCompatible, isFalse);
+    expect(cyrillicInGerman.detectedUnexpectedScript, WritingScript.cyrillic);
+
+    // Latin entered for Cyrillic target (Ukrainian)
+    final latinInUk = WordScriptValidator.validate(
+      text: 'apple',
+      targetLangCode: 'uk',
+    );
+    expect(latinInUk.isCompatible, isFalse);
+    expect(latinInUk.detectedUnexpectedScript, WritingScript.latin);
+
+    // Mixed lookalike Cyrillic letter inside a Latin word ('c' + Cyrillic 'а' + 't')
+    final mixedToken = WordScriptValidator.validate(
+      text: 'c\u0430t',
+      targetLangCode: 'en',
+    );
+    expect(mixedToken.isCompatible, isFalse);
+    expect(mixedToken.isMixedToken, isTrue);
+
+    // Valid diacritics for German / Czech / Polish
+    expect(
+      WordScriptValidator.validate(text: 'Straße & Grüße', targetLangCode: 'de')
+          .isCompatible,
+      isTrue,
+    );
+    expect(
+      WordScriptValidator.validate(text: 'příliš žluťoučký', targetLangCode: 'cs')
+          .isCompatible,
+      isTrue,
+    );
+
+    // Dual-script Serbian accepts both Cyrillic and Latin
+    expect(
+      WordScriptValidator.validate(text: 'здраво', targetLangCode: 'sr')
+          .isCompatible,
+      isTrue,
+    );
+    expect(
+      WordScriptValidator.validate(text: 'zdravo', targetLangCode: 'sr')
+          .isCompatible,
+      isTrue,
+    );
+
+    // Numbers & punctuation only are neutral
+    expect(
+      WordScriptValidator.validate(text: '2026!', targetLangCode: 'de')
+          .isCompatible,
+      isTrue,
+    );
+
+    // AppController.autofillVocabWord skips AI call completely on script mismatch
+    TestWidgetsFlutterBinding.ensureInitialized();
+    SharedPreferences.setMockInitialValues({});
+    var apiCalls = 0;
+    final mockClient = MockClient((request) async {
+      apiCalls++;
+      return http.Response('{"error":"should not be called"}', 500);
+    });
+    final controller = AppController(
+      geminiService: GeminiService(
+        routerClient: AiRouterClient(httpClient: mockClient),
+      ),
+    );
+    await controller.updateSettings(
+      const AppSettings(
+        targetLanguageCode: 'de',
+        nativeLanguageCode: 'uk',
+        geminiApiKey: 'AIzaSyTestZeroQuotaGuard123',
+      ),
+    );
+    final blocked = await controller.autofillVocabWord('привіт');
+    expect(apiCalls, 0);
+    expect(blocked.isTargetLanguage, isFalse);
+    expect(blocked.errorDetail, 'script_mismatch');
+  });
+
+  test('AI autofill detects wrong language with same script and returns replacement', () async {
+    final mockClient = MockClient((request) async {
+      final url = request.url.toString();
+      if (request.method == 'GET' && url.contains('/v1beta/models?key=')) {
+        return http.Response(
+          jsonEncode({
+            'models': [
+              {
+                'name': 'models/gemini-3.5-flash-lite',
+                'supportedGenerationMethods': ['generateContent'],
+              },
+            ],
+          }),
+          200,
+        );
+      }
+      return http.Response.bytes(
+        utf8.encode(
+          jsonEncode({
+            'candidates': [
+              {
+                'content': {
+                  'parts': [
+                    {
+                      'text': jsonEncode({
+                        'isTargetLanguage': false,
+                        'detectedLanguage': 'Англійська',
+                        'suggestedTargetWord': 'der Apfel',
+                        'translation': 'яблуко',
+                        'example': 'Ich esse jeden Morgen einen Apfel.',
+                        'exampleTranslation': 'Я їм яблуко щоранку.',
+                        'partOfSpeech': 'іменник',
+                      }),
+                    },
+                  ],
+                },
+                'finishReason': 'STOP',
+              },
+            ],
+          }),
+        ),
+        200,
+        headers: {'content-type': 'application/json; charset=utf-8'},
+      );
+    });
+
+    final service = AiTranslationService(AiRouterClient(httpClient: mockClient));
+    final res = await service.autofillVocabularyWord(
+      word: 'apple',
+      settings: const AppSettings(
+        targetLanguageCode: 'de',
+        nativeLanguageCode: 'uk',
+        geminiApiKey: 'AIzaSyMockLangCheckKey123',
+      ),
+    );
+
+    expect(res.usedAi, isTrue);
+    expect(res.isTargetLanguage, isFalse);
+    expect(res.hasLanguageMismatch, isTrue);
+    expect(res.detectedLanguage, 'Англійська');
+    expect(res.suggestedTargetWord, 'der Apfel');
+    expect(res.translation, 'яблуко');
+    expect(res.example, 'Ich esse jeden Morgen einen Apfel.');
+    expect(res.exampleTranslation, 'Я їм яблуко щоранку.');
+
+    // Serialization round-trip keeps mismatch fields
+    final restored = WordAutofillResult.fromJson(res.toJson(), fromCache: true);
+    expect(restored.isTargetLanguage, isFalse);
+    expect(restored.detectedLanguage, 'Англійська');
+    expect(restored.suggestedTargetWord, 'der Apfel');
+  });
+
+  test('Universal word origin detection works across any language pair', () async {
+    // 1. Universal language-name & ISO code matcher
+    expect(
+      WordScriptValidator.doesDetectedLanguageMatchTarget(
+        detectedLanguage: 'Словацька мова',
+        targetLang: languageByCode('cs'),
+      ),
+      isFalse,
+    );
+    expect(
+      WordScriptValidator.doesDetectedLanguageMatchTarget(
+        detectedLanguage: 'Чеська мова',
+        targetLang: languageByCode('cs'),
+      ),
+      isTrue,
+    );
+    expect(
+      WordScriptValidator.doesDetectedLanguageMatchTarget(
+        detectedLanguage: 'Німецька (Австрія)',
+        detectedLanguageCode: 'de-AT',
+        targetLang: languageByCode('de'),
+      ),
+      isTrue,
+    );
+    expect(
+      WordScriptValidator.doesDetectedLanguageMatchTarget(
+        detectedLanguage: 'Російська мова',
+        targetLang: languageByCode('uk'),
+      ),
+      isFalse,
+    );
+    // Guard against prefix collisions (Malay vs Malayalam, Slovak vs Slovenian, Latin vs Latvian)
+    expect(
+      WordScriptValidator.doesDetectedLanguageMatchTarget(
+        detectedLanguage: 'Malayalam',
+        targetLang: languageByCode('ms'),
+      ),
+      isFalse,
+    );
+    expect(
+      WordScriptValidator.doesDetectedLanguageMatchTarget(
+        detectedLanguage: 'Slovenian',
+        targetLang: languageByCode('sk'),
+      ),
+      isFalse,
+    );
+    expect(
+      WordScriptValidator.doesDetectedLanguageMatchTarget(
+        detectedLanguage: 'Latvian',
+        targetLang: languageByCode('la'),
+      ),
+      isFalse,
+    );
+
+    // 2. Preserves detectedLanguage when word matches target language,
+    //    AND flags mismatch if detectedLanguage contradicts targetLanguage
+    var callIndex = 0;
+    final mockClient = MockClient((request) async {
+      final url = request.url.toString();
+      if (request.method == 'GET' && url.contains('/v1beta/models?key=')) {
+        return http.Response(
+          jsonEncode({
+            'models': [
+              {
+                'name': 'models/gemini-3.5-flash-lite',
+                'supportedGenerationMethods': ['generateContent'],
+              },
+            ],
+          }),
+          200,
+        );
+      }
+      callIndex++;
+      final payload = callIndex == 1
+          ? {
+              'detectedLanguage': 'Німецька мова',
+              'detectedLanguageCode': 'de',
+              'isTargetLanguage': true,
+              'suggestedTargetWord': '',
+              'translation': 'книга',
+              'example': 'Das Buch liegt auf dem Tisch.',
+              'exampleTranslation': 'Книга лежить на столі.',
+              'partOfSpeech': 'іменник',
+            }
+          : {
+              // Even if LLM mistakenly sets isTargetLanguage=true while reporting Slovak for Czech
+              'detectedLanguage': 'Словацька мова',
+              'detectedLanguageCode': 'sk',
+              'isTargetLanguage': true,
+              'suggestedTargetWord': 'děkuji',
+              'translation': 'дякую',
+              'example': 'Děkuji za vaši pomoc.',
+              'exampleTranslation': 'Дякую за вашу допомогу.',
+              'partOfSpeech': 'вигук',
+            };
+      return http.Response.bytes(
+        utf8.encode(
+          jsonEncode({
+            'candidates': [
+              {
+                'content': {
+                  'parts': [
+                    {'text': jsonEncode(payload)},
+                  ],
+                },
+                'finishReason': 'STOP',
+              },
+            ],
+          }),
+        ),
+        200,
+        headers: {'content-type': 'application/json; charset=utf-8'},
+      );
+    });
+
+    final service = AiTranslationService(AiRouterClient(httpClient: mockClient));
+
+    // Matched German word retains detectedLanguage
+    final matched = await service.autofillVocabularyWord(
+      word: 'das Buch',
+      settings: const AppSettings(
+        targetLanguageCode: 'de',
+        nativeLanguageCode: 'uk',
+        geminiApiKey: 'AIzaSyUniversalOriginKey123',
+      ),
+    );
+    expect(matched.isTargetLanguage, isTrue);
+    expect(matched.detectedLanguage, 'Німецька мова');
+    expect(matched.detectedLanguageCode, 'de');
+    expect(matched.suggestedTargetWord, isEmpty);
+
+    // Slovak word entered for Czech target is universally flagged as mismatch
+    final mismatched = await service.autofillVocabularyWord(
+      word: 'ďakujem',
+      settings: const AppSettings(
+        targetLanguageCode: 'cs',
+        nativeLanguageCode: 'uk',
+        geminiApiKey: 'AIzaSyUniversalOriginKey123',
+      ),
+    );
+    expect(mismatched.isTargetLanguage, isFalse);
+    expect(mismatched.detectedLanguage, 'Словацька мова');
+    expect(mismatched.detectedLanguageCode, 'sk');
+    expect(mismatched.suggestedTargetWord, 'děkuji');
+
+    // Verify localized warning format & origin label
+    final ukStrings = AppStrings('uk');
+    expect(
+      ukStrings
+          .tr('vocab_lang_mismatch_warning')
+          .replaceAll('{detected}', 'Словацька мова')
+          .replaceAll('{target}', ukStrings.shortLangName(languageByCode('cs'))),
+      'Слово визначено як: Словацька мова (обрана мова вивчення: Чеська)',
+    );
+    expect(
+      ukStrings
+          .tr('vocab_detected_origin_label')
+          .replaceAll('{detected}', 'Німецька мова'),
+      'Мова слова: Німецька мова',
+    );
   });
 }

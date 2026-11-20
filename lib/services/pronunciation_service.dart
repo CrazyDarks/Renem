@@ -57,15 +57,6 @@ class PronunciationService {
       _availableRecordings.contains(slot) ||
       _availableRecordings.contains('default');
 
-  Future<void> _startNativeCapture(String slot) async {
-    try {
-      await _audioChannel.invokeMethod<bool>(
-        'startVoiceCapture',
-        {'slot': slot},
-      );
-    } catch (_) {}
-  }
-
   Future<void> _stopNativeCapture(String slot) async {
     try {
       final hasAudio = await _audioChannel.invokeMethod<bool>(
@@ -131,13 +122,18 @@ class PronunciationService {
     }
 
     _activeSlot = recordingSlot;
-    await _startNativeCapture(recordingSlot);
+    // Note: On Android (especially MIUI/HyperOS), starting native AudioRecord concurrently
+    // with SpeechToText locks the hardware microphone, causing SpeechToText to hear only silence.
+    // Therefore, SpeechToText manages the microphone directly.
 
     var autoStopped = false;
 
+    // Standardize locale format (try original locale tag first, e.g. 'en_US' or 'en-US')
+    final effectiveLocale = localeId.trim().isNotEmpty ? localeId : 'en_US';
+
     await _speech.listen(
       listenOptions: SpeechListenOptions(
-        localeId: localeId.replaceAll('-', '_'),
+        localeId: effectiveLocale,
         listenFor: const Duration(seconds: 15),
         pauseFor: const Duration(seconds: 3),
         partialResults: true,
@@ -159,7 +155,6 @@ class PronunciationService {
           if (eval.scorePercent >= autoStopThreshold || allWordsMatched) {
             autoStopped = true;
             _speech.stop();
-            _stopNativeCapture(recordingSlot);
             _availableRecordings.add(recordingSlot);
             _availableRecordings.add('default');
             onResult(words, true);
@@ -168,7 +163,6 @@ class PronunciationService {
         }
 
         if (result.finalResult) {
-          _stopNativeCapture(recordingSlot);
           if (words.isNotEmpty) {
             _availableRecordings.add(recordingSlot);
             _availableRecordings.add('default');

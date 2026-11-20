@@ -23,6 +23,7 @@ class StorageService {
   static const _keyLearningTopic = 'lm_learning_topic';
   static const _keyUiL10nPrefix = 'lm_ui_l10n_v3_';
   static const _keyAiRuleCachePrefix = 'lm_ai_rule_v1_';
+  static const _keyVocabAutofillCachePrefix = 'lm_vocab_autofill_v1_';
   static const _keyVocabulary = 'lm_vocabulary_v2';
   static const _keyMaterials = 'lm_materials_v2';
   static const _keyUserProgress = 'lm_user_progress_v2';
@@ -164,6 +165,78 @@ class StorageService {
   ) async {
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(exactKey, jsonEncode(items));
+  }
+
+  /// Loads a cached vocabulary word autofill entry for the given language pair
+  /// and learning topic so repeated lookups resolve instantaneously offline.
+  Future<WordAutofillResult?> loadVocabAutofillCache({
+    required String word,
+    required String targetLangCode,
+    required String nativeLangCode,
+    required String topicId,
+  }) async {
+    final normalized = WordAutofillResult.normalizeWord(word);
+    if (normalized.isEmpty) return null;
+    final prefs = await SharedPreferences.getInstance();
+    final bucketKey =
+        '$_keyVocabAutofillCachePrefix${targetLangCode}_$nativeLangCode';
+    final raw = prefs.getString(bucketKey);
+    if (raw == null || raw.isEmpty) return null;
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map<String, dynamic>) return null;
+      final entryKey = WordAutofillResult.entryKey(
+        word: normalized,
+        topicId: topicId,
+      );
+      final entry = decoded[entryKey];
+      if (entry is Map<String, dynamic>) {
+        final parsed = WordAutofillResult.fromJson(entry, fromCache: true);
+        if (parsed.hasTranslation || !parsed.isTargetLanguage) return parsed;
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  /// Saves a vocabulary word autofill result to the local bounded cache
+  /// (up to 250 entries per language pair).
+  Future<void> saveVocabAutofillCache({
+    required WordAutofillResult result,
+    required String targetLangCode,
+    required String nativeLangCode,
+    required String topicId,
+  }) async {
+    if (!result.hasTranslation && result.isTargetLanguage) return;
+    final normalized = WordAutofillResult.normalizeWord(result.word);
+    if (normalized.isEmpty) return;
+
+    final prefs = await SharedPreferences.getInstance();
+    final bucketKey =
+        '$_keyVocabAutofillCachePrefix${targetLangCode}_$nativeLangCode';
+    final map = <String, dynamic>{};
+    final raw = prefs.getString(bucketKey);
+    if (raw != null && raw.isNotEmpty) {
+      try {
+        final decoded = jsonDecode(raw);
+        if (decoded is Map<String, dynamic>) {
+          map.addAll(decoded);
+        }
+      } catch (_) {}
+    }
+
+    final entryKey = WordAutofillResult.entryKey(
+      word: normalized,
+      topicId: topicId,
+    );
+    map.remove(entryKey);
+    map[entryKey] = result.toJson();
+
+    const maxEntries = 250;
+    while (map.length > maxEntries) {
+      map.remove(map.keys.first);
+    }
+
+    await prefs.setString(bucketKey, jsonEncode(map));
   }
 
   Future<AppSettings> loadSettings() async {

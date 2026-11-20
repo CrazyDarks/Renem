@@ -5,6 +5,8 @@ import 'package:http/http.dart' as http;
 
 import '../../models/app_settings.dart';
 import '../../models/exam_models.dart';
+import '../../models/vocab_word.dart';
+import '../word_script_validator.dart';
 import 'ai_router_client.dart';
 
 /// Handles contextual word lookup (tailored to [LearningTopic]), fast sentence
@@ -65,6 +67,296 @@ Respond ONLY with valid JSON (no markdown fences) using this exact schema:
       contextSentence: contextSentence,
       targetLang: targetLang,
       nativeLang: nativeLang,
+    );
+  }
+
+  /// Auto-fills translation, natural topic-aware example sentence, example
+  /// translation, and verifies whether the entered word genuinely belongs to
+  /// the target language — all in a single fast Multi-AI request.
+  ///
+  /// Gracefully falls back to lightweight online translation if AI providers
+  /// fail, and returns an empty translation with [WordAutofillResult.errorDetail]
+  /// when completely offline so the user can enter fields manually without blocking.
+  Future<WordAutofillResult> autofillVocabularyWord({
+    required String word,
+    required AppSettings settings,
+  }) async {
+    final cleaned = word.trim();
+    if (cleaned.isEmpty) {
+      return const WordAutofillResult(
+        word: '',
+        translation: '',
+        example: '',
+        exampleTranslation: '',
+      );
+    }
+
+    final targetLang = settings.targetLanguage;
+    final nativeLang = settings.nativeLanguage;
+    final topicDirective = settings.learningTopic.aiPromptDirective;
+
+    final prompt = '''
+You are a fast, precise universal bilingual dictionary, language origin detector, and language tutor.
+Selected target language (language being learned): ${targetLang.englishName} (native name: ${targetLang.displayNativeName}, ISO code: ${targetLang.code})
+User interface / native language (for translations and language names): ${nativeLang.englishName} (ISO code: ${nativeLang.code})
+$topicDirective
+Input word or phrase: "$cleaned"
+
+Analyze the real language / linguistic origin of "$cleaned" completely objectively for ANY language in the world:
+1. ALWAYS fill "detectedLanguage" in ${nativeLang.englishName} naming the language or linguistic variant of "$cleaned" (for example, in Ukrainian: "Англійська мова", "Німецька мова", "Словацька мова", "Українська мова"; in English: "English", "German", "Slovak", "Ukrainian" — always write it in ${nativeLang.englishName}).
+2. ALWAYS fill "detectedLanguageCode" with the ISO 639-1 code of the detected language (e.g. "${targetLang.code}", "${nativeLang.code}", etc.).
+3. Set "isTargetLanguage" to true ONLY if "$cleaned" genuinely belongs to ${targetLang.englishName} as a normative word or phrase (including established loanwords and cognates commonly used in ${targetLang.englishName}).
+   If "$cleaned" belongs to a different language (including closely related languages, the user's native language, or a foreign/non-normative form), set "isTargetLanguage" to false.
+4. If "isTargetLanguage" is true:
+   - Set "suggestedTargetWord": ""
+   - Provide "translation" in ${nativeLang.englishName}, a natural "example" sentence in ${targetLang.englishName} using "$cleaned", and "exampleTranslation" in ${nativeLang.englishName}.
+5. If "isTargetLanguage" is false:
+   - Set "suggestedTargetWord" to the natural normative equivalent word or phrase in ${targetLang.englishName}.
+   - Provide "translation" of that word in ${nativeLang.englishName}, a natural "example" sentence in ${targetLang.englishName} using "suggestedTargetWord", and "exampleTranslation" in ${nativeLang.englishName}.
+
+Respond ONLY with valid JSON (no markdown fences, no commentary) using this exact schema:
+{
+  "detectedLanguage": "language or variant name ALWAYS written in ${nativeLang.englishName}",
+  "detectedLanguageCode": "ISO 639-1 code",
+  "isTargetLanguage": true,
+  "suggestedTargetWord": "",
+  "translation": "accurate, natural translation in ${nativeLang.englishName}",
+  "example": "one natural, clear example sentence in ${targetLang.englishName} using the target word or phrase (reflecting the learning topic when natural)",
+  "exampleTranslation": "accurate translation of the example sentence in ${nativeLang.englishName}",
+  "partOfSpeech": "short part of speech in ${nativeLang.englishName}"
+}
+''';
+
+    String? aiErrorDetail;
+    try {
+      final aiRes = await _router.generateTextSmart(
+        prompt: prompt,
+        rawKeys: settings.geminiApiKey,
+        timeout: const Duration(seconds: 10),
+        fastTask: true,
+      );
+      aiErrorDetail = aiRes.userKeyErrorSummary ?? aiRes.errorSummary;
+      final map = _router.extractJsonObject(aiRes.text);
+      if (map != null) {
+        final translation = (map['translation'] as String? ?? '').trim();
+        final example = (map['example'] as String? ?? '').trim();
+        var exampleTranslation = (map['exampleTranslation'] as String? ??
+                map['example_translation'] as String? ??
+                '')
+            .trim();
+        final partOfSpeech = (map['partOfSpeech'] as String? ??
+                map['part_of_speech'] as String? ??
+                '')
+            .trim();
+        var isTargetLanguage = _parseFlexibleBool(
+          map['isTargetLanguage'] ?? map['is_target_language'],
+          fallback: true,
+        );
+        var detectedLanguage = (map['detectedLanguage'] as String? ??
+                map['detected_language'] as String? ??
+                '')
+            .trim();
+        var detectedLanguageCode = (map['detectedLanguageCode'] as String? ??
+                map['detected_language_code'] as String? ??
+                '')
+            .trim();
+        var suggestedTargetWord = (map['suggestedTargetWord'] as String? ??
+                map['suggested_target_word'] as String? ??
+                '')
+            .trim();
+
+        final detectedMatchesTarget =
+            WordScriptValidator.doesDetectedLanguageMatchTarget(
+          detectedLanguage: detectedLanguage,
+          detectedLanguageCode: detectedLanguageCode,
+          targetLang: targetLang,
+        );
+
+        // If AI explicitly returned a different detectedLanguage than targetLang,
+        // treat it as a mismatch even if the boolean was mistakenly left true.
+        if (isTargetLanguage && !detectedMatchesTarget) {
+          isTargetLanguage = false;
+        }
+
+        // Guard only against self-contradiction where replacement equals input
+        // and detectedLanguage itself matches targetLang.
+        if (!isTargetLanguage) {
+          final normInput = WordAutofillResult.normalizeWord(cleaned);
+          final normSuggested =
+              WordAutofillResult.normalizeWord(suggestedTargetWord);
+          if (normSuggested.isNotEmpty &&
+              normSuggested == normInput &&
+              detectedMatchesTarget) {
+            isTargetLanguage = true;
+            suggestedTargetWord = '';
+          } else if (normSuggested == normInput) {
+            suggestedTargetWord = '';
+          }
+        } else {
+          suggestedTargetWord = '';
+          if (detectedLanguage.isEmpty) {
+            detectedLanguage = nativeLang.code == 'uk'
+                ? targetLang.nameUk
+                : targetLang.englishName;
+          }
+          if (detectedLanguageCode.isEmpty) {
+            detectedLanguageCode = targetLang.code;
+          }
+        }
+
+        if (translation.isNotEmpty || !isTargetLanguage) {
+          if (example.isNotEmpty && exampleTranslation.isEmpty) {
+            final translatedEx = await translateSentence(
+              sentence: example,
+              sourceLangCode: targetLang.code,
+              targetLangCode: nativeLang.code,
+            );
+            if (translatedEx != example) {
+              exampleTranslation = translatedEx;
+            }
+          }
+          return WordAutofillResult(
+            word: cleaned,
+            translation: translation,
+            example: example,
+            exampleTranslation: exampleTranslation,
+            partOfSpeech: partOfSpeech,
+            isTargetLanguage: isTargetLanguage,
+            detectedLanguage: detectedLanguage,
+            detectedLanguageCode: detectedLanguageCode,
+            suggestedTargetWord: suggestedTargetWord,
+            usedAi: true,
+            providerName: aiRes.provider,
+          );
+        }
+      }
+    } catch (e) {
+      aiErrorDetail = _router.shortError(e);
+      debugPrint('[Reman AI] autofillVocabularyWord error: $e');
+    }
+
+    // Lightweight online fallback (only if reachable; never inserts error strings)
+    final fallback = await _tryLightweightAutofillFallback(
+      word: cleaned,
+      targetLang: targetLang,
+      nativeLang: nativeLang,
+    );
+    if (fallback != null && fallback.hasTranslation) {
+      return fallback;
+    }
+
+    return WordAutofillResult(
+      word: cleaned,
+      translation: '',
+      example: '',
+      exampleTranslation: '',
+      usedAi: false,
+      errorDetail: aiErrorDetail ?? 'offline_or_unavailable',
+    );
+  }
+
+  static bool _parseFlexibleBool(dynamic raw, {bool fallback = true}) {
+    if (raw is bool) return raw;
+    if (raw is String) {
+      final lower = raw.trim().toLowerCase();
+      if (lower == 'false' || lower == '0' || lower == 'no') return false;
+      if (lower == 'true' || lower == '1' || lower == 'yes') return true;
+    }
+    if (raw is num) return raw != 0;
+    return fallback;
+  }
+
+  Future<WordAutofillResult?> _tryLightweightAutofillFallback({
+    required String word,
+    required LanguageOption targetLang,
+    required LanguageOption nativeLang,
+  }) async {
+    String translation = '';
+    String partOfSpeech = '';
+    String example = '';
+    String exampleTranslation = '';
+
+    try {
+      final gtxUri = Uri.https(
+        'translate.googleapis.com',
+        '/translate_a/single',
+        {
+          'client': 'gtx',
+          'sl': targetLang.code,
+          'tl': nativeLang.code,
+          'dt': 't',
+          'q': word,
+        },
+      );
+      final resp = await http.get(gtxUri).timeout(const Duration(seconds: 5));
+      if (resp.statusCode == 200) {
+        final decoded = jsonDecode(resp.body) as List<dynamic>;
+        final segments = decoded.first as List<dynamic>?;
+        if (segments != null && segments.isNotEmpty) {
+          final translated = segments
+              .whereType<List<dynamic>>()
+              .map((s) => s.isNotEmpty ? (s.first?.toString() ?? '') : '')
+              .join()
+              .trim();
+          if (translated.isNotEmpty) {
+            translation = translated;
+          }
+        }
+      }
+    } catch (_) {}
+
+    if (translation.isEmpty) return null;
+
+    if (targetLang.code == 'en') {
+      try {
+        final dictUri = Uri.parse(
+          'https://api.dictionaryapi.dev/api/v2/entries/en/${Uri.encodeComponent(word.toLowerCase())}',
+        );
+        final resp =
+            await http.get(dictUri).timeout(const Duration(seconds: 4));
+        if (resp.statusCode == 200) {
+          final list = jsonDecode(resp.body) as List<dynamic>;
+          if (list.isNotEmpty) {
+            final entry = list.first as Map<String, dynamic>;
+            final meanings = entry['meanings'] as List<dynamic>? ?? const [];
+            if (meanings.isNotEmpty) {
+              final firstMeaning = meanings.first as Map<String, dynamic>;
+              partOfSpeech =
+                  (firstMeaning['partOfSpeech'] as String? ?? '').trim();
+              final defs =
+                  firstMeaning['definitions'] as List<dynamic>? ?? const [];
+              for (final d in defs.whereType<Map<String, dynamic>>()) {
+                final ex = (d['example'] as String? ?? '').trim();
+                if (ex.isNotEmpty) {
+                  example = ex;
+                  break;
+                }
+              }
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
+    if (example.isNotEmpty) {
+      final translatedEx = await translateSentence(
+        sentence: example,
+        sourceLangCode: targetLang.code,
+        targetLangCode: nativeLang.code,
+      );
+      if (translatedEx != example) {
+        exampleTranslation = translatedEx;
+      }
+    }
+
+    return WordAutofillResult(
+      word: word,
+      translation: translation,
+      example: example,
+      exampleTranslation: exampleTranslation,
+      partOfSpeech: partOfSpeech,
+      usedAi: false,
+      providerName: 'Quick Translate',
     );
   }
 

@@ -408,6 +408,17 @@ class _SrsPracticeViewState extends State<SrsPracticeView> {
                       textAlign: TextAlign.center,
                       style: textTheme.bodyMedium,
                     ),
+                    if (card.exampleTranslation.isNotEmpty) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        card.exampleTranslation,
+                        textAlign: TextAlign.center,
+                        style: textTheme.bodySmall?.copyWith(
+                          color: scheme.onSurfaceVariant,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ],
                   ],
                 ] else if (!_audioMode) ...[
                   const SizedBox(height: 24),

@@ -67,6 +67,13 @@ class AppStrings {
     return option.englishName;
   }
 
+  /// Concise localized language name suitable for inline badges and warnings.
+  String shortLangName(LanguageOption option) {
+    if (lang == 'uk') return option.nameUk;
+    if (option.code == lang) return option.displayNativeName;
+    return option.englishName;
+  }
+
   static const Map<String, Map<String, String>> _translations = {
     'tab_materials': {
       'uk': 'Матеріали',
@@ -3171,6 +3178,241 @@ class AppStrings {
       'uk': 'Винятки та типові помилки',
       'en': 'Exceptions & Common Mistakes',
       'ur': 'استثناء اور عام غلطیاں',
+    },
+    'word_in_target_lang_label': {
+      'uk': 'Слово або фраза мовою вивчення',
+      'en': 'Word or phrase in target language',
+      'ur': 'ہدف زبان میں لفظ یا جملہ',
+    },
+    'word_in_target_lang_hint': {
+      'uk': 'Введіть слово — ШІ підбере переклад і приклад',
+      'en': 'Type a word — AI will suggest translation & example',
+      'ur': 'لفظ لکھیں — AI ترجمہ اور مثال تجویز کرے گا',
+    },
+    'ai_autofill_btn': {
+      'uk': 'Перекласти та підібрати приклад',
+      'en': 'Translate & suggest example',
+      'ur': 'ترجمہ کریں اور مثال تلاش کریں',
+    },
+    'ai_autofill_loading': {
+      'uk': 'ШІ підбирає переклад і приклад...',
+      'en': 'AI is fetching translation & example...',
+      'ur': 'AI ترجمہ اور مثال تیار کر رہا ہے...',
+    },
+    'ai_autofill_done_cache': {
+      'uk': 'Заповнено з локального кешу · можна редагувати',
+      'en': 'Filled from local cache · editable',
+      'ur': 'مقامی کیش سے بھرا گیا · قابل تدوین',
+    },
+    'ai_autofill_done_ai': {
+      'uk': 'Заповнено ШІ · можна редагувати',
+      'en': 'Filled by AI · editable',
+      'ur': 'AI کے ذریعے بھرا گیا · قابل تدوین',
+    },
+    'ai_autofill_done_fallback': {
+      'uk': 'Переклад знайдено · приклад можна дописати вручну',
+      'en': 'Translation found · you can add an example manually',
+      'ur': 'ترجمہ مل گیا · آپ مثال خود لکھ سکتے ہیں',
+    },
+    'ai_autofill_offline_hint': {
+      'uk': 'ШІ зараз недоступний (перевірте інтернет або API-ключ у Налаштуваннях). Ви можете ввести переклад вручну.',
+      'en': 'AI is currently unavailable (check internet or API key in Settings). You can enter the translation manually.',
+      'ur': 'AI فی الحال دستیاب نہیں (انٹرنیٹ یا سیٹنگز میں API کی چیک کریں)۔ آپ ترجمہ دستی طور پر لکھ سکتے ہیں۔',
+    },
+    'example_usage_label': {
+      'uk': 'Приклад вживання',
+      'en': 'Usage example',
+      'ur': 'استعمال کی مثال',
+    },
+    'example_translation_label': {
+      'uk': 'Переклад прикладу',
+      'en': 'Example translation',
+      'ur': 'مثال کا ترجمہ',
+    },
+    'speak_word_tooltip': {
+      'uk': 'Озвучити слово',
+      'en': 'Pronounce word',
+      'ur': 'لفظ سنیں',
+    },
+    'speak_example_tooltip': {
+      'uk': 'Озвучити приклад',
+      'en': 'Pronounce example',
+      'ur': 'مثال سنیں',
+    },
+    'vocab_script_mismatch_warning': {
+      'uk': 'Схоже, слово введено іншим алфавітом ({script}), ніж мова вивчення ({target}). Запит до ШІ не надсилається.',
+      'en': 'This word appears to use a different alphabet ({script}) than your target language ({target}). AI request skipped.',
+      'ur': 'ایسا لگتا ہے کہ یہ لفظ آپ کی ہدف زبان ({target}) کے بجائے دوسرے رسم الخط ({script}) میں لکھا گیا ہے۔',
+    },
+    'vocab_script_mismatch_generic': {
+      'uk': 'Схоже, слово введено іншим алфавітом, ніж мова вивчення ({target}). Запит до ШІ не надсилається.',
+      'en': 'This word appears to use a different alphabet than your target language ({target}). AI request skipped.',
+      'ur': 'ایسا لگتا ہے کہ یہ لفظ ہدف زبان ({target}) سے مختلف رسم الخط میں لکھا گیا ہے۔',
+    },
+    'vocab_script_mismatch_mixed': {
+      'uk': 'У слові змішано літери різних алфавітів (помічено {script}). Перевірте розкладку для мови {target}.',
+      'en': 'This word mixes letters from different alphabets ({script} detected). Please check your keyboard layout for {target}.',
+      'ur': 'اس لفظ میں مختلف رسم الخط ({script}) کے حروف ملے ہوئے ہیں۔ {target} کے لیے کی بورڈ چیک کریں۔',
+    },
+    'vocab_detected_origin_label': {
+      'uk': 'Мова слова: {detected}',
+      'en': 'Detected language: {detected}',
+      'ur': 'لفظ کی زبان: {detected}',
+    },
+    'vocab_lang_mismatch_warning': {
+      'uk': 'Слово визначено як: {detected} (обрана мова вивчення: {target})',
+      'en': 'Word detected as: {detected} (selected target language: {target})',
+      'ur': 'لفظ کی شناخت: {detected} (منتخب ہدف زبان: {target})',
+    },
+    'vocab_lang_mismatch_generic': {
+      'uk': 'Слово визначено як іншу мову (обрана мова вивчення: {target})',
+      'en': 'Word detected as another language (selected target language: {target})',
+      'ur': 'لفظ دوسری زبان کا لگتا ہے (منتخب ہدف زبان: {target})',
+    },
+    'vocab_replace_word_btn': {
+      'uk': 'Замінити на «{word}»',
+      'en': 'Replace with “{word}”',
+      'ur': '«{word}» سے تبدیل کریں',
+    },
+    'vocab_save_mismatch_title': {
+      'uk': 'Зберегти попри попередження?',
+      'en': 'Save despite language warning?',
+      'ur': 'انتباہ کے باوجود محفوظ کریں؟',
+    },
+    'vocab_save_mismatch_body_script': {
+      'uk': 'Слово «{word}» введено іншим алфавітом, ніж мова вивчення ({target}). Якщо це власна назва або виняток, ви можете зберегти його все одно.',
+      'en': '“{word}” uses a different alphabet than your target language ({target}). If this is a proper noun or intentional exception, you can still save it.',
+      'ur': '«{word}» آپ کی ہدف زبان ({target}) سے مختلف رسم الخط میں ہے۔ اگر یہ اسم خاص یا استثناء ہے تو آپ اسے محفوظ کر سکتے ہیں۔',
+    },
+    'vocab_save_mismatch_body_lang': {
+      'uk': 'ШІ визначив, що «{word}» схоже на «{detected}», а не «{target}». Якщо це власна назва або виняток, ви можете зберегти його все одно.',
+      'en': 'AI detected that “{word}” looks like {detected} instead of {target}. If this is a proper noun or intentional exception, you can still save it.',
+      'ur': 'AI کے مطابق «{word}» «{target}» کے بجائے «{detected}» لگتا ہے۔ اگر یہ اسم خاص یا استثناء ہے تو آپ اسے محفوظ کر سکتے ہیں۔',
+    },
+    'vocab_save_anyway_btn': {
+      'uk': 'Зберегти все одно',
+      'en': 'Save anyway',
+      'ur': 'پھر بھی محفوظ کریں',
+    },
+    'script_latin': {
+      'uk': 'латиниця',
+      'en': 'Latin',
+      'ur': 'لاطینی',
+    },
+    'script_cyrillic': {
+      'uk': 'кирилиця',
+      'en': 'Cyrillic',
+      'ur': 'سیریلک',
+    },
+    'script_greek': {
+      'uk': 'грецька абетка',
+      'en': 'Greek',
+      'ur': 'یونانی',
+    },
+    'script_arabic': {
+      'uk': 'арабська в’язь',
+      'en': 'Arabic',
+      'ur': 'عربی',
+    },
+    'script_hebrew': {
+      'uk': 'іврит',
+      'en': 'Hebrew',
+      'ur': 'عبرانی',
+    },
+    'script_cjk': {
+      'uk': 'ієрогліфи',
+      'en': 'Chinese/CJK',
+      'ur': 'چینی رسم الخط',
+    },
+    'script_japanese': {
+      'uk': 'японська писемність',
+      'en': 'Japanese',
+      'ur': 'جاپانی',
+    },
+    'script_korean': {
+      'uk': 'корейський хангиль',
+      'en': 'Korean Hangul',
+      'ur': 'کوریائی',
+    },
+    'script_devanagari': {
+      'uk': 'деванагарі',
+      'en': 'Devanagari',
+      'ur': 'دیوناگری',
+    },
+    'script_bengali': {
+      'uk': 'бенгальське письмо',
+      'en': 'Bengali',
+      'ur': 'بنگالی',
+    },
+    'script_gurmukhi': {
+      'uk': 'ґурмукхі',
+      'en': 'Gurmukhi',
+      'ur': 'گورمکھی',
+    },
+    'script_gujarati': {
+      'uk': 'гуджараті',
+      'en': 'Gujarati',
+      'ur': 'گجراتی',
+    },
+    'script_tamil': {
+      'uk': 'тамільське письмо',
+      'en': 'Tamil',
+      'ur': 'تمل',
+    },
+    'script_telugu': {
+      'uk': 'телугу',
+      'en': 'Telugu',
+      'ur': 'تیلگو',
+    },
+    'script_kannada': {
+      'uk': 'каннада',
+      'en': 'Kannada',
+      'ur': 'کنڑ',
+    },
+    'script_malayalam': {
+      'uk': 'малаялам',
+      'en': 'Malayalam',
+      'ur': 'ملیالم',
+    },
+    'script_sinhala': {
+      'uk': 'сингальське письмо',
+      'en': 'Sinhala',
+      'ur': 'سنہالا',
+    },
+    'script_thai': {
+      'uk': 'тайське письмо',
+      'en': 'Thai',
+      'ur': 'تھائی',
+    },
+    'script_lao': {
+      'uk': 'лаоське письмо',
+      'en': 'Lao',
+      'ur': 'لاؤ',
+    },
+    'script_myanmar': {
+      'uk': 'бірманське письмо',
+      'en': 'Myanmar',
+      'ur': 'برمی',
+    },
+    'script_khmer': {
+      'uk': 'кхмерське письмо',
+      'en': 'Khmer',
+      'ur': 'خمیر',
+    },
+    'script_georgian': {
+      'uk': 'грузинське письмо',
+      'en': 'Georgian',
+      'ur': 'جارجیائی',
+    },
+    'script_armenian': {
+      'uk': 'вірменське письмо',
+      'en': 'Armenian',
+      'ur': 'آرمینیائی',
+    },
+    'script_ethiopic': {
+      'uk': 'ефіопське письмо',
+      'en': 'Ethiopic',
+      'ur': 'ایتھوپیائی',
     },
   };
 

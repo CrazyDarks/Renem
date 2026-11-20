@@ -8,6 +8,7 @@ class VocabWord {
     this.languageCode = 'en',
     this.contextSentence = '',
     this.exampleSentence = '',
+    this.exampleTranslation = '',
     this.partOfSpeech = '',
     this.sourceTitle = '',
     required this.createdAt,
@@ -24,6 +25,7 @@ class VocabWord {
   final String languageCode;
   final String contextSentence;
   final String exampleSentence;
+  final String exampleTranslation;
   final String partOfSpeech;
   final String sourceTitle;
   final DateTime createdAt;
@@ -45,6 +47,7 @@ class VocabWord {
     String? languageCode,
     String? contextSentence,
     String? exampleSentence,
+    String? exampleTranslation,
     String? partOfSpeech,
     String? sourceTitle,
     DateTime? createdAt,
@@ -61,6 +64,7 @@ class VocabWord {
       languageCode: languageCode ?? this.languageCode,
       contextSentence: contextSentence ?? this.contextSentence,
       exampleSentence: exampleSentence ?? this.exampleSentence,
+      exampleTranslation: exampleTranslation ?? this.exampleTranslation,
       partOfSpeech: partOfSpeech ?? this.partOfSpeech,
       sourceTitle: sourceTitle ?? this.sourceTitle,
       createdAt: createdAt ?? this.createdAt,
@@ -149,6 +153,7 @@ class VocabWord {
       'languageCode': languageCode,
       'contextSentence': contextSentence,
       'exampleSentence': exampleSentence,
+      'exampleTranslation': exampleTranslation,
       'partOfSpeech': partOfSpeech,
       'sourceTitle': sourceTitle,
       'createdAt': createdAt.toIso8601String(),
@@ -169,6 +174,7 @@ class VocabWord {
       languageCode: json['languageCode'] as String? ?? 'en',
       contextSentence: json['contextSentence'] as String? ?? '',
       exampleSentence: json['exampleSentence'] as String? ?? '',
+      exampleTranslation: json['exampleTranslation'] as String? ?? '',
       partOfSpeech: json['partOfSpeech'] as String? ?? '',
       sourceTitle: json['sourceTitle'] as String? ?? '',
       createdAt: DateTime.tryParse(json['createdAt'] as String? ?? '') ?? now,
@@ -178,6 +184,124 @@ class VocabWord {
       lapses: (json['lapses'] as num?)?.toInt() ?? 0,
       nextReviewAt:
           DateTime.tryParse(json['nextReviewAt'] as String? ?? '') ?? now,
+    );
+  }
+}
+
+/// Structured result returned by AI when auto-filling a new vocabulary entry.
+class WordAutofillResult {
+  const WordAutofillResult({
+    required this.word,
+    required this.translation,
+    required this.example,
+    required this.exampleTranslation,
+    this.partOfSpeech = '',
+    this.isTargetLanguage = true,
+    this.detectedLanguage = '',
+    this.detectedLanguageCode = '',
+    this.suggestedTargetWord = '',
+    this.usedAi = false,
+    this.fromCache = false,
+    this.providerName = '',
+    this.errorDetail,
+  });
+
+  final String word;
+  final String translation;
+  final String example;
+  final String exampleTranslation;
+  final String partOfSpeech;
+  final bool isTargetLanguage;
+  final String detectedLanguage;
+  final String detectedLanguageCode;
+  final String suggestedTargetWord;
+  final bool usedAi;
+  final bool fromCache;
+  final String providerName;
+  final String? errorDetail;
+
+  bool get hasTranslation => translation.trim().isNotEmpty;
+  bool get hasExample => example.trim().isNotEmpty;
+  bool get hasDetectedLanguage => detectedLanguage.trim().isNotEmpty;
+  bool get hasLanguageMismatch => !isTargetLanguage;
+  bool get hasSuggestedTargetWord => suggestedTargetWord.trim().isNotEmpty;
+
+  static String normalizeWord(String word) =>
+      word.trim().toLowerCase().replaceAll(RegExp(r'\s+'), ' ');
+
+  static String entryKey({
+    required String word,
+    required String topicId,
+  }) =>
+      '$topicId::${normalizeWord(word)}';
+
+  WordAutofillResult copyWith({
+    String? word,
+    String? translation,
+    String? example,
+    String? exampleTranslation,
+    String? partOfSpeech,
+    bool? isTargetLanguage,
+    String? detectedLanguage,
+    String? detectedLanguageCode,
+    String? suggestedTargetWord,
+    bool? usedAi,
+    bool? fromCache,
+    String? providerName,
+    String? errorDetail,
+  }) {
+    return WordAutofillResult(
+      word: word ?? this.word,
+      translation: translation ?? this.translation,
+      example: example ?? this.example,
+      exampleTranslation: exampleTranslation ?? this.exampleTranslation,
+      partOfSpeech: partOfSpeech ?? this.partOfSpeech,
+      isTargetLanguage: isTargetLanguage ?? this.isTargetLanguage,
+      detectedLanguage: detectedLanguage ?? this.detectedLanguage,
+      detectedLanguageCode: detectedLanguageCode ?? this.detectedLanguageCode,
+      suggestedTargetWord: suggestedTargetWord ?? this.suggestedTargetWord,
+      usedAi: usedAi ?? this.usedAi,
+      fromCache: fromCache ?? this.fromCache,
+      providerName: providerName ?? this.providerName,
+      errorDetail: errorDetail ?? this.errorDetail,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'word': word,
+      'translation': translation,
+      'example': example,
+      'exampleTranslation': exampleTranslation,
+      'partOfSpeech': partOfSpeech,
+      'isTargetLanguage': isTargetLanguage,
+      'detectedLanguage': detectedLanguage,
+      'detectedLanguageCode': detectedLanguageCode,
+      'suggestedTargetWord': suggestedTargetWord,
+      'usedAi': usedAi,
+      'providerName': providerName,
+    };
+  }
+
+  factory WordAutofillResult.fromJson(
+    Map<String, dynamic> json, {
+    bool fromCache = false,
+  }) {
+    return WordAutofillResult(
+      word: (json['word'] as String? ?? '').trim(),
+      translation: (json['translation'] as String? ?? '').trim(),
+      example: (json['example'] as String? ?? '').trim(),
+      exampleTranslation: (json['exampleTranslation'] as String? ?? '').trim(),
+      partOfSpeech: (json['partOfSpeech'] as String? ?? '').trim(),
+      isTargetLanguage: json['isTargetLanguage'] as bool? ?? true,
+      detectedLanguage: (json['detectedLanguage'] as String? ?? '').trim(),
+      detectedLanguageCode:
+          (json['detectedLanguageCode'] as String? ?? '').trim(),
+      suggestedTargetWord:
+          (json['suggestedTargetWord'] as String? ?? '').trim(),
+      usedAi: json['usedAi'] as bool? ?? true,
+      fromCache: fromCache,
+      providerName: (json['providerName'] as String? ?? '').trim(),
     );
   }
 }

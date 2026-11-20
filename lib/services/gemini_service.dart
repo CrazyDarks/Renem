@@ -5,6 +5,7 @@ import '../models/exam_models.dart';
 import '../models/grammar_book_models.dart';
 import '../models/level_curriculum.dart';
 import '../models/reading_rules_book.dart';
+import '../models/vocab_word.dart';
 import 'ai/ai_curriculum_service.dart';
 import 'ai/ai_exam_service.dart';
 import 'ai/ai_router_client.dart';
@@ -120,6 +121,15 @@ class GeminiService {
       _translation.lookupWordInContext(
         word: word,
         contextSentence: contextSentence,
+        settings: settings,
+      );
+
+  Future<WordAutofillResult> autofillVocabularyWord({
+    required String word,
+    required AppSettings settings,
+  }) =>
+      _translation.autofillVocabularyWord(
+        word: word,
         settings: settings,
       );
 
